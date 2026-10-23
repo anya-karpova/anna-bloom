@@ -7,6 +7,16 @@
   const PRODUCTS = window.BLOOM_PRODUCTS || [];
   const PHONE = '79518836281';
   const TELEGRAM_URL = 'https://t.me/Anya_karpova';
+  const SHEETS_ENDPOINT = (() => {
+    try {
+      const url = new URL(String(window.BLOOM_SHEETS_ENDPOINT || '').trim());
+      return url.protocol === 'https:' &&
+        url.hostname === 'script.google.com' &&
+        /^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname) ? url.href : '';
+    } catch { return ''; }
+  })();
+  let sendingOrder = false;
+  let lastOrderId = '';
   const CART_KEY = 'anna-bloom-cart-v1';
   const FAV_KEY = 'anna-bloom-favorites-v1';
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -149,8 +159,65 @@
     lines.push('Прошу сообщить возможность изготовления и итоговую стоимость.');
     return lines.join('\n');
   }
-  function submitOrder(event) {
+  function newOrderId() {
+    const date = new Date().toISOString().slice(0,10).replaceAll('-', '');
+    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const bytes = new Uint8Array(10);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+    else for (let i=0;i<bytes.length;i++) bytes[i]=Math.floor(Math.random()*256);
+    const suffix = [...bytes].map(b=>charset[b % charset.length]).join('');
+    return 'AB-' + date + '-' + suffix;
+  }
+
+  function checkSheetStatus(id) {
+    return new Promise(resolve => {
+      const callbackName = 'bloomAck_' + newOrderId().replace(/[^A-Z0-9]/g,'');
+      let finished = false;
+      const el = document.createElement('script');
+      const finish = value => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        el.remove();
+        try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
+        resolve(Boolean(value));
+      };
+      window[callbackName] = data => finish(data && data.saved === true);
+      el.onerror = () => finish(false);
+      el.src = SHEETS_ENDPOINT + '?id=' + encodeURIComponent(id) + '&callback=' +
+        encodeURIComponent(callbackName) + '&t=' + Date.now();
+      const timer = setTimeout(() => finish(false), 6000);
+      document.head.appendChild(el);
+    });
+  }
+
+  function showOrderResult(id, mode) {
+    $('#orderId').textContent = '№ ' + id;
+    $('#sendOrderWhatsapp').href = 'https://wa.me/' + PHONE + '?text=' + encodeURIComponent(orderMessage);
+    const title = $('#orderSuccess h2');
+    const note = $('#orderSuccess > p');
+    const label = $('#orderSuccess .section-kicker');
+    if (mode === 'saved') {
+      label.textContent = 'ЗАЯВКА ПОЛУЧЕНА';
+      title.innerHTML = 'Спасибо за <em>заявку!</em>';
+      note.textContent = 'Заявка сохранена. Мы свяжемся с Вами по указанному номеру, чтобы обсудить детали. При желании Вы можете также написать в WhatsApp.';
+    } else if (mode === 'unconfirmed') {
+      label.textContent = 'НУЖНО ПОДТВЕРЖДЕНИЕ';
+      title.innerHTML = 'Проверим <em>заявку?</em>';
+      note.textContent = 'Не удалось подтвердить запись в таблицу. Заявка могла поступить. Для надёжности отправьте подготовленное сообщение в WhatsApp.';
+    } else {
+      label.textContent = 'ВСЁ ГОТОВО';
+      title.innerHTML = 'Осталось только <em>отправить.</em>';
+      note.textContent = 'Сообщение сформировано. Нажмите «Открыть WhatsApp» и отправьте его в чате. Без этого шага заявка не поступит.';
+    }
+    $('#orderFormView').hidden = true;
+    $('#orderSuccess').hidden = false;
+    $('#orderModal').scrollTop = 0;
+  }
+
+  async function submitOrder(event) {
     event.preventDefault();
+    if (sendingOrder) return;
     const form = event.currentTarget;
     const name = form.elements.name.value.trim();
     const phone = formatPhone(form.elements.phone.value);
@@ -166,16 +233,60 @@
     else if (!consent) error = 'Для подготовки заявки необходимо согласие на обработку данных.';
     if (error) { err.textContent = error; err.hidden = false; return; }
     err.hidden = true;
-    const id = `AB-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${String(Date.now()).slice(-5)}`;
-    orderMessage = buildMessage({name,phone,date,place,message},id);
-    $('#orderId').textContent = '№ ' + id;
-    $('#sendOrderWhatsapp').href = `https://wa.me/${PHONE}?text=${encodeURIComponent(orderMessage)}`;
-    $('#orderFormView').hidden = true; $('#orderSuccess').hidden = false;
-    $('#orderModal').scrollTop = 0;
+    const id = newOrderId();
+    lastOrderId = id;
+    orderMessage = buildMessage({name,phone,date,place,message}, id);
+    if (!SHEETS_ENDPOINT) {
+      showOrderResult(id, 'whatsapp');
+      return;
+    }
+    const payload = {
+      id, name, phone, eventDate: date, place, message, consent: true,
+      website: form.elements.website ? form.elements.website.value : '',
+      items: orderItems.map(row => ({
+        name: lookup(row.id).name, qty: row.qty
+      })),
+      estimatedTotal: orderItems.reduce((sum, row) => sum + lookup(row.id).price * row.qty, 0)
+    };
+    const btn = $('#orderForm .form-submit');
+    const originalLabel = btn.innerHTML;
+    sendingOrder = true;
+    btn.disabled = true;
+    btn.textContent = 'Отправляем заявку…';
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        await fetch(SHEETS_ENDPOINT, {
+          method: 'POST', mode: 'no-cors',
+          headers: {'Content-Type': 'text/plain;charset=utf-8'},
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+      } finally { clearTimeout(timer); }
+      // Google Apps Script's cross-origin response is opaque; verify saving separately.
+      let saved = false;
+      for (let retry=0; retry<3 && !saved; retry++) {
+        if (retry) await new Promise(r => setTimeout(r, 1100));
+        saved = await checkSheetStatus(id);
+      }
+      showOrderResult(id, saved ? 'saved' : 'unconfirmed');
+    } catch {
+      showOrderResult(id, 'unconfirmed');
+    } finally {
+      sendingOrder = false;
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
   }
   function openPrivacy(fromOrder=false) { privacyBackToOrder = fromOrder; openLayer('privacy'); }
   function closePrivacy() { const goBack = privacyBackToOrder; privacyBackToOrder = false; closeLayer(); if (goBack) openLayer('order'); }
 
+  if (SHEETS_ENDPOINT) {
+    $('#orderFormView .modal-lead').textContent = 'Заполните форму, и мы получим Вашу заявку. Затем свяжемся с Вами для уточнения стоимости и деталей.';
+    $('#orderForm .form-submit').innerHTML = 'Отправить заявку <span>↗</span>';
+    $('#orderForm .form-hint').textContent = 'Предварительная заявка без оплаты. Ваши данные будут переданы для обработки заказа.';
+  }
   cleanCart();
   $('#currentYear').textContent = String(new Date().getFullYear());
   renderProducts(); renderCart();
