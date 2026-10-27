@@ -295,3 +295,38 @@ h1,h2,h3 {color:var(--ink)}
 @media (prefers-reduced-motion: reduce) {
   .hero-flower-img,.product-image-wrap img,.category-circle img {transition:none!important}
 }
+
+/* Editorial benefits / descriptive collection heading / shop mobile navigation */
+.benefits {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;padding:26px 0 27px;border-bottom:1px solid var(--line)}
+.benefit {display:flex;align-items:center;justify-content:center;gap:14px;min-width:0}
+.benefit-ico {display:grid;place-items:center;flex:none;width:39px;height:39px;border:1px solid #DBBDCA;border-radius:50%;background:#FFFDFB;color:var(--rose);font-size:14px}
+.benefit>div {display:flex;flex-direction:column;gap:3px}
+.benefit strong {font-size:12px;font-weight:800;color:var(--ink)}
+.benefit small {font-size:10px;color:var(--muted)}
+.categories-title {font:500 clamp(46px,4.8vw,68px)/1.05 var(--serif);letter-spacing:-.05em;margin:16px 0 23px;color:var(--ink)}
+.hero-stamp span {font:800 8px/1.5 var(--sans);letter-spacing:.17em;text-transform:uppercase;margin-top:7px}
+.mobile-nav-icon {display:grid;place-items:center;width:23px;height:23px;font-size:20px}
+@media (max-width: 760px) {
+  .benefits {display:none}
+  .categories-title {font-size:clamp(42px,10.2vw,60px);line-height:1.03;margin:20px 0 22px}
+  .category-row {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mobile-contact-bar {
+    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch;
+    min-height:69px;padding:5px 6px calc(7px + env(safe-area-inset-bottom,0px));
+    background:#FFFDFB;border-top:1px solid var(--line);box-shadow:0 -8px 35px rgba(47,41,48,.05);
+  }
+  .mobile-contact-bar a,.mobile-contact-bar button {
+    background:transparent;border:0;min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    font:600 10px/1.2 var(--sans);color:#74676D;padding:3px 2px;text-align:center;
+  }
+  .mobile-contact-bar a:hover,.mobile-contact-bar button:hover,.mobile-contact-bar .mobile-home {color:var(--rose)}
+  .mobile-contact-bar .ico {width:21px;height:21px;stroke-width:1.5}
+  .site-footer {padding-bottom:110px}
+  .cart-drawer {z-index:110}
+  .overlay {z-index:90}
+  .modal {z-index:120}
+}
+@media (max-width: 400px) {
+  .categories-title {font-size:41px}
+  .mobile-contact-bar a,.mobile-contact-bar button {font-size:9px}
+}
